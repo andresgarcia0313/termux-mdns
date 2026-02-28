@@ -1,0 +1,39 @@
+#\!/data/data/com.termux/files/usr/bin/bash
+# ssh-mdns-proxy: Resolve .local via mDNS with fallbacks, then connect
+HOST="$1"
+PORT="${2:-22}"
+CACHE="$HOME/.ssh/mdns-cache"
+QUERY="${HOST%.local}"
+
+# Alias mapping (short name → mDNS hostname)
+declare -A ALIASES=(
+    [dell]="dell-latitude3400"
+    [lenovo]="lenovo-ideapad"
+)
+[[ -n "${ALIASES[$QUERY]}" ]] && QUERY="${ALIASES[$QUERY]}"
+
+# 1. mDNS resolution
+IP=$("$HOME/.local/bin/mdns-resolve" "${QUERY}.local" 2 2>/dev/null)
+
+# 2. Fallback: Tailscale DNS
+if [[ -z "$IP" ]]; then
+    IP=$(getent hosts "${QUERY}.tailb0bb74.ts.net" 2>/dev/null | awk "{print \$1}")
+fi
+
+# 3. Fallback: cached IP
+if [[ -z "$IP" && -f "$CACHE" ]]; then
+    IP=$(grep "^${QUERY} " "$CACHE" 2>/dev/null | awk "{print \$2}")
+fi
+
+if [[ -z "$IP" ]]; then
+    echo "Error: cannot resolve ${HOST}" >&2
+    exit 1
+fi
+
+# Save to cache
+mkdir -p "$(dirname "$CACHE")"
+grep -v "^${QUERY} " "$CACHE" > "${CACHE}.tmp" 2>/dev/null || true
+echo "${QUERY} ${IP}" >> "${CACHE}.tmp"
+mv "${CACHE}.tmp" "$CACHE"
+
+exec nc "$IP" "$PORT"
